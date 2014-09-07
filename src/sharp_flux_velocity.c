@@ -116,10 +116,13 @@ int DoIt(){
     long *t_secs;					/* T_OBS time converted to seconds since UNIX epoch */
     double *umb_p_vel,*umb_n_vel;	/* Umbral LOS velocities */
     double *pen_p_vel,*pen_n_vel;	/* Penumbral LOS velocities */
+    double *f_umb_p_vel,*f_umb_n_vel;	/* Umbral LOS velocities, "fixed" */
+    double *f_pen_p_vel,*f_pen_n_vel;	/* Penumbral LOS velocities, "fixed" */
     double umb_p_counter,umb_n_counter;	/* Counters for averages */
     double pen_p_counter,pen_n_counter;
     double vr,vn,vw,vt;				/* Various LOS velocities due to satellite motion and solar rotation */
-    double vlos_fixed;				/* VLOS after removing all of the satellite motion and solar rotation */
+    double vlos;					/* VLOS after removing all of the satellite motion and solar rotation */
+    double vlos_fixed;				/* VLOS after removing all of the satellite motion and solar rotation and flattened using mu position */
     double x,y;						/* Pixel location on the solar disk */
     double ttx,tty,tx,ty,zz;		/* Intermediate variables for coordinate conversions */
     double lat,lon;					/* Carrington coordinate latitude and longitude */
@@ -238,6 +241,11 @@ int DoIt(){
 	pen_p_vel=malloc(num_records*sizeof(double));
 	umb_n_vel=malloc(num_records*sizeof(double));
 	pen_n_vel=malloc(num_records*sizeof(double));
+	
+	f_umb_p_vel=malloc(num_records*sizeof(double));
+	f_pen_p_vel=malloc(num_records*sizeof(double));
+	f_umb_n_vel=malloc(num_records*sizeof(double));
+	f_pen_n_vel=malloc(num_records*sizeof(double));
 
 	/* Record quality */
 	
@@ -712,6 +720,11 @@ int DoIt(){
 				umb_n_vel[k]=0;
 				pen_n_vel[k]=0;
 				
+				f_umb_p_vel[k]=0;
+				f_pen_p_vel[k]=0;
+				f_umb_n_vel[k]=0;
+				f_pen_n_vel[k]=0;
+				
 				umb_p_counter=0.0;
 				umb_n_counter=0.0;
 				pen_p_counter=0.0;
@@ -754,12 +767,12 @@ int DoIt(){
 								/* vlos after removing all of the doppler effects. The 
 								 * division by 100 is to convert cm/s to m/s. */
 								
-								vlos_fixed=(vlos_dat[j][i]/100)-vr-vn-vw-vt;
+								vlos=(vlos_dat[j][i]/100)-vr-vn-vw-vt;
 								
 								/* Get rid of the LOS funniness */
 								
 								mu=sqrt(1-pow(radius[j][i]/rsun_pix,2.0));
-							    vlos_fixed=vlos_fixed/limb_darken(mu);
+							    vlos_fixed=vlos/limb_darken(mu);
 						
 								/* "Positive" sunspot polarities. */
 							
@@ -767,14 +780,16 @@ int DoIt(){
 								
 									if (con_dat[j][i] <= umb){
 									
-										umb_p_vel[k]+=vlos_fixed;
+										umb_p_vel[k]+=vlos;
+										f_umb_p_vel[k]+=vlos_fixed;
 										umb_p_counter++;
 								
 									}
 								
 									if (con_dat[j][i] > umb){
 									
-										pen_p_vel[k]+=vlos_fixed;
+										f_pen_p_vel[k]+=vlos_fixed;
+										pen_p_vel[k]+=vlos;
 										pen_p_counter++;
 									
 									}
@@ -789,14 +804,16 @@ int DoIt(){
 								
 									if (con_dat[j][i] <= umb){
 									
-										umb_n_vel[k]+=vlos_fixed;
+										umb_n_vel[k]+=vlos;
+										f_umb_n_vel[k]+=vlos_fixed;
 										umb_n_counter++;
 								
 									}
 								
 									if (con_dat[j][i] > umb){
 									
-										pen_n_vel[k]+=vlos_fixed;
+										f_pen_n_vel[k]+=vlos_fixed;
+										pen_n_vel[k]+=vlos;
 										pen_n_counter++;
 									
 									}
@@ -812,40 +829,48 @@ int DoIt(){
 				if (umb_p_counter > 0){
 					
 					umb_p_vel[k]/=umb_p_counter;
+					f_umb_p_vel[k]/=umb_p_counter;
 					
 				} else {
 					
 					umb_p_vel[k]=0;
+					f_umb_p_vel[k]=0;
 					
 				}
 			
 				if (umb_n_counter > 0){
 					
 					umb_n_vel[k]/=umb_n_counter;
+					f_umb_n_vel[k]/=umb_n_counter;
 					
 				} else {
 					
 					umb_n_vel[k]=0;
+					f_umb_n_vel[k]=0;
 					
 				}
 				
 				if (pen_p_counter > 0){
 					
 					pen_p_vel[k]/=pen_p_counter;
+					f_pen_p_vel[k]/=pen_p_counter;
 					
 				} else {
 					
 					pen_p_vel[k]=0;
+					f_pen_p_vel[k]=0;
 					
 				}
 
 				if (pen_n_counter > 0){
 					
 					pen_n_vel[k]/=pen_n_counter;
+					f_pen_n_vel[k]/=pen_n_counter;
 					
 				} else {
 					
 					pen_n_vel[k]=0;
+					f_pen_n_vel[k]=0;
 					
 				}
 				
@@ -897,9 +922,9 @@ int DoIt(){
 	outptr=fopen(outfile_name,"w");
 	bad_outptr=fopen(bad_outfile_name,"w");
 	
-	fprintf(outptr,"Active Region: %d\tVelocities are in m/s\n",noaa_ar);
-	fprintf(outptr,"Full UT Time            time(s)  p umb vel  p pen vel  n umb vel  n pen vel\n");
-	fprintf(outptr,"----------------------  -------  ---------  ---------  ---------  ---------\n");
+	fprintf(outptr,"Active Region: %d\tVelocities are in m/s, fvlos is scaled to remove limb effects.\n",noaa_ar);
+	fprintf(outptr,"Full UT Time            time(s)  vlos pumb  vlos ppen  vlos numb  vlos npen  fvlos pum  fvlos ppe  fvlos num  fvlos npe\n");
+	fprintf(outptr,"----------------------  -------  ---------  ---------  ---------  ---------  ---------  ---------  ---------  ---------\n");
 
 	fprintf(bad_outptr,"Active Region: AR%d\n",noaa_ar);
 	fprintf(bad_outptr,"Full UT Time            quality\n");
@@ -911,7 +936,7 @@ int DoIt(){
 		
 		if (quality[i] == 0){
 		
-			fprintf(outptr,"%s  %7ld  %6.2lf  %6.2lf  %6.2lf  %6.2lf\n",t_obs_s[i],t_secs[i]-t_secs[0],umb_p_vel[i],pen_p_vel[i],umb_n_vel[i],pen_n_vel[i]);
+			fprintf(outptr,"%s  %7ld  %6.2lf  %6.2lf  %6.2lf  %6.2lf  %6.2lf  %6.2lf  %6.2lf  %6.2lf\n",t_obs_s[i],t_secs[i]-t_secs[0],umb_p_vel[i],pen_p_vel[i],umb_n_vel[i],pen_n_vel[i],f_umb_p_vel[i],f_pen_p_vel[i],f_umb_n_vel[i],f_pen_n_vel[i]);
 		
 		} else {
 			
@@ -935,6 +960,11 @@ int DoIt(){
 	free(pen_p_vel);
 	free(umb_n_vel);
 	free(pen_n_vel);
+	
+	free(f_umb_p_vel);
+	free(f_pen_p_vel);
+	free(f_umb_n_vel);
+	free(f_pen_n_vel);
 	
 	free(quality);
 	
