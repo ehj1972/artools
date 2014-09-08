@@ -15,6 +15,8 @@
  * 
  * 06.02.2014		--		Added bilinear_interpolate and supporting functions.
  * 
+ * 09.08.2014		--		Moved omega function from this file to solarlib_analysis.
+ * 
  * 
  * */
 
@@ -45,19 +47,6 @@ void rotate(double x, double y, double theta, double* rx, double* ry){
     *ry=x*sin(theta)+y*cos(theta);
     return;
 }
-
-double omega(double latitude,double A,double B,double C){
-    /* This calculates the angular velocity due to differential rotation, as per Beck's summary.
-    * This is a helper function for v_t() */
-    
-    /* variable declaration */
-    double sin_lat,om;
-    /* main function */
-    sin_lat=sin(latitude);
-    om=pow(10.0,-6.0)*(A+B*pow(sin_lat,2.0)+C*pow(sin_lat,4.0));
-    return om;
-}
-
 
 double arg(double x, double y){
 	

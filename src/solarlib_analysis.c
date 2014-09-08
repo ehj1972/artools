@@ -20,6 +20,9 @@
  * 
  * 08.09.2014		--		Changed spotbounds so that cutoffs are function arguments
  * 							instead of being hard-coded in.
+ * 
+ * 09.08.2014		--		Changed the arguments to vt so that users can put in their 
+ * 							own rotational constants. Moved omega() to this file from solarlib_helper.
  * */
 
 #define _GNU_SOURCE
@@ -399,22 +402,56 @@ double br_error(double c_min, double c_quiet, double c_min_err, double c_quiet_e
 
 }
 
-double v_t(double latitude){
+double omega(double latitude,double A,double B,double C){
+    /* This calculates the angular velocity due to differential rotation, as per Beck's summary.
+    * This is a helper function for v_t(), note that Beck's paper gives coefficients in microradians/sec,
+    * so we convert to radians/s to make this useful to us. */
+    
+    /* variable declaration */
+    
+    double slat,om;
+    
+    /* main function */
+    
+    slat=sin(latitude);  /* latitude assumed to have been converted to radians */
+    
+    om=A+B*pow(slat,2.0)+C*pow(slat,4.0);
+    om=om*pow(10.0,-6.0);
+    
+    return om;
+}
+
+double v_t(double latitude,a0,a1,a2){
     /* Calculates the tangential velocity of the photosphere at latitude. 
-    Coefficients in are from Snodgrass 1984a (see Beck's 1999 summary), using 
-    photospheric spectral data. */
+    Default coefficients are from Snodgrass and Ulrich 1990 (see Beck's 1999 summary), using 
+    photospheric spectral data. Get these by setting a0,a1,a2 to 0. */
 
     /* define variables */
+    
     double lat,theta;
     double A,B,C;
     double v_tan;
+    
     /* main function */
-    A=2.851;
-    B=-0.343;
-    C=-0.474;
+    
+    if ((a0 == 0)&&(a1 == 0)&&(a2 == 0)){
+    
+		A=2.972;
+		B=-0.484;
+		C=-0.361;
+    
+	} else {
+		
+		A=a0;
+		B=a1;
+		C=a2;
+		
+	}
+    
     lat=latitude*deg2rad;
     theta=piov2-lat;
     v_tan=omega(lat,A,B,C)*rsun_ref*sin(theta);
+    
     return v_tan;
 }
       

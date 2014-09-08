@@ -742,12 +742,15 @@ int DoIt(){
 							
 								x=rpllx+(double)i;
 								y=rplly+(double)j;
-							
-								pixel2hpl(x,y,crota2,imcrpix1,imcrpix2,cdelt1,cdelt2,&tx,&ty);
-							
-								/* Stonyhurst/carrington needed for photospheric velocity calcs */
 								
+								/* Stonyhurst/carrington needed for photospheric velocity calcs */
+							
+								pixel2hpl(x,y,crota2,imcrpix1,imcrpix2,cdelt1,cdelt2,&tx,&ty);	
 								hpl2stony(tx,ty,dsun_obs,crln_obs,crlt_obs,&lat,&lon);
+								
+								/* Photospheric rotation removal */
+								
+								vt=v_t(lat,0,0,0)*along_phi(t,p,dsun_obs); /*0's are for default coefficients */
 							
 								/* Convert to spherical with no rotation to account for sat orientation and handle LOS stuff */
 							
@@ -761,8 +764,6 @@ int DoIt(){
 								vr=obs_vr*along_obs(t,p,dsun_obs);
 								vn=obs_vn*along_north(t,p,dsun_obs);
 								vw=obs_vw*along_west(t,p,dsun_obs);
-							
-								vt=v_t(lat)*along_phi(t,p,dsun_obs);
 								
 								/* vlos after removing all of the doppler effects. The 
 								 * division by 100 is to convert cm/s to m/s. */

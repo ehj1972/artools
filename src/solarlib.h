@@ -8,7 +8,7 @@ void arclength(double,double,double,double,double*); /* Calculates the arclength
 void arclength_e(double,double,double,double,double,double,double,double,double*,double*); /* Arclength, with error */
 void tilt_angle(double,double,double,double,double*); /* Calculates the tilt angle between two centroids relative to the solar equator */
 void tilt_angle_e(double,double,double,double,double,double,double,double,double*,double*); /* tilt_angle, with error */
-double v_t(double);		/* Tangential velocity (along the latitude direction) from photospheric data */
+double v_t(double,double,double,double);		/* Tangential velocity (along the latitude direction) from photospheric data */
 double centroid_error(double*,double*,int,double,double); /* Performs centroid error calculations based upon field error */
 double br_error(double,double,double,double); /* Performs brightness ratio error calculations based on continuum intensity information */
 int connected_component_detect(int **,int,int); /* Finds the number of unique sunspots within an image mask */
