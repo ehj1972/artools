@@ -421,7 +421,7 @@ double omega(double latitude,double A,double B,double C){
     return om;
 }
 
-double v_t(double latitude,a0,a1,a2){
+double v_t(double latitude, double a0, double a1, double a2){
     /* Calculates the tangential velocity of the photosphere at latitude. 
     Default coefficients are from Snodgrass and Ulrich 1990 (see Beck's 1999 summary), using 
     photospheric spectral data. Get these by setting a0,a1,a2 to 0. */
