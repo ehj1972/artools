@@ -7,7 +7,12 @@
  * 
  * Changelog:		
  * 			
- * 			2014.09.03		--		First version of this code.	
+ * 			2014.09.03		--		First version of this code.
+ * 
+ * 			2014.09.08		--		Added a routine to subtract trends in the velocity that 
+ * 									are due to any remaining limb and doppler effects. Also,
+ * 									removed code specific to limb effects, there should be 
+ * 									a need for it now. 
  * 		
  */
 
@@ -22,6 +27,7 @@
 #include <fitsio.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <mpfit.h>
 #include "solarlib.h"
 
 char *module_name="sharp_field";
@@ -33,10 +39,51 @@ ModuleArgs_t module_args[]={
     {ARG_STRING,"harpnum","","SHARPs number for the active region."},
 	{ARG_STRING,"time_range","[]","time range to generate footpoints over (optional), format is [01.02.2013_04:05:06/??]"},
 	{ARG_DOUBLE,"umb_sig","2.575829","Standard error to base the cutoff between the quiet sun and what is considered to be a sunspot."},
+	{ARG_INT,"num_divs","3","Number of sections to break image strips into when fitting for trend removal."},
 	{ARG_DOUBLE,"pen_sig","1.0","Standard error used to determine what is considered to be an umbra and what is a penumbra."},
     {}
 
 };
+
+/* Structure for fitting data shared between functions and main routine */
+    
+struct vars_struct{
+	
+	double *x;
+	double *y;
+	double *ey;
+	
+};
+
+/* Fitting function with residuals */
+
+int fit_me(int N, int np, double *p, double *dy, double **dvec, void *vars){
+	
+	int i;
+	
+	struct vars_struct *v=(struct vars_struct*) vars;
+	double *x,*y,*ey,f;
+	double a,b;
+	
+	x=v->x;
+	y=v->y;
+	ey=v->ey;
+	
+	a=p[0];
+	b=p[1];
+	
+	/* Simple linear fit */
+	
+	for (i=0;i<N;i++){
+		
+		f=a*x[i]+b;
+		dy[i]=(y[i]-f);
+	
+	}
+	
+	return 0;
+
+}
 
 /* Main program */
 
@@ -46,12 +93,13 @@ int DoIt(){
 
     /* Generic use variables */
 
-    int i,j,k;					/* Generic loop counters */
+    int i,j,k,l,n;								/* Generic loop counters */
 
     /* DRMS/JSOC variables */
 
 	char *harpnum,*time_range;					/* SHARPs ID and time range from module_args[] */
 	double umb_sig, pen_sig;					/* Cutoffs for sunspots */
+	int num_divs;								/* Number of divisions to break a data strip into for trend removal */
 	char *drms_query;							/* The DRMS query we are going to send */
 	int num_query_chars;						/* Number of characters in total query for malloc definition */
 	CmdParams_t *params=&cmdparams;				/* For the module_args stuff */
@@ -116,23 +164,44 @@ int DoIt(){
     long *t_secs;					/* T_OBS time converted to seconds since UNIX epoch */
     double *umb_p_vel,*umb_n_vel;	/* Umbral LOS velocities */
     double *pen_p_vel,*pen_n_vel;	/* Penumbral LOS velocities */
-    double *f_umb_p_vel,*f_umb_n_vel;	/* Umbral LOS velocities, "fixed" */
-    double *f_pen_p_vel,*f_pen_n_vel;	/* Penumbral LOS velocities, "fixed" */
     double umb_p_counter,umb_n_counter;	/* Counters for averages */
     double pen_p_counter,pen_n_counter;
     double vr,vn,vw,vt;				/* Various LOS velocities due to satellite motion and solar rotation */
     double vlos;					/* VLOS after removing all of the satellite motion and solar rotation */
-    double vlos_fixed;				/* VLOS after removing all of the satellite motion and solar rotation and flattened using mu position */
+    double **y_axis;				/* Array to be looped over wrt naxis2 to remove trends */
+    double **y_error;				/* Error on y axis, taken as 1 */
+    double **x_axis;				/* Array to be looped over that holds naxis1 information for fitting */
     double x,y;						/* Pixel location on the solar disk */
     double ttx,tty,tx,ty,zz;		/* Intermediate variables for coordinate conversions */
     double lat,lon;					/* Carrington coordinate latitude and longitude */
     double p,t;						/* Spherical phi and theta coordinates */
 	int noaa_ar;					/* Active region number */
+	mp_result result;				/* Fitting result structure */
+	mp_config config;				/* Configuration options for fitting structure */
+	double perror[2];				/* Error on fitting coefficients */
+	double fit_params[2];			/* Fitting coefficients */
+	struct vars_struct v;			/* Private data, shared between main and functions */
+	int fit_status;					/* Fitting returned status */
+	int inv_len;					/* Interval length for breaking data up */
+	
        
     /* Initialise variables that need it */
 
-    i=j=k=0;
     drms_status=0;
+    
+	memset(&result,0,sizeof(result));
+	memset(&config,0,sizeof(config));
+	
+	/* Set the error stuff for cmfit */
+	
+	result.xerror=perror;
+	
+	/* Set the default options for cmfit */
+	
+	config.ftol=1.49012e-08;
+	config.xtol=1.49012e-08;
+	config.gtol=0.0;
+	config.maxfev=0;
     
 	/* Grab values from module_args[] */
 
@@ -140,6 +209,7 @@ int DoIt(){
 	time_range=strdup(params_get_str(params,"time_range"));
 	umb_sig=params_get_double(params,"umb_sig");
 	pen_sig=params_get_double(params,"pen_sig");
+	num_divs=params_get_int(params,"num_divs");
 	
 	/* Now we start the main program. The rough layout is as follows: 
 	   
@@ -241,11 +311,6 @@ int DoIt(){
 	pen_p_vel=malloc(num_records*sizeof(double));
 	umb_n_vel=malloc(num_records*sizeof(double));
 	pen_n_vel=malloc(num_records*sizeof(double));
-	
-	f_umb_p_vel=malloc(num_records*sizeof(double));
-	f_pen_p_vel=malloc(num_records*sizeof(double));
-	f_umb_n_vel=malloc(num_records*sizeof(double));
-	f_pen_n_vel=malloc(num_records*sizeof(double));
 
 	/* Record quality */
 	
@@ -582,12 +647,16 @@ int DoIt(){
 
 				/* Now set some definite boundaries on arrays to help with memory usage. Arrays are called as con_dat[y][x]. */
 				
+				inv_len=naxis1/num_divs;
 				
 				vlos_dat=malloc(naxis2*sizeof(double *));
 				inc_dat=malloc(naxis2*sizeof(double *));
 				con_dat=malloc(naxis2*sizeof(double *));
 				radius=malloc(naxis2*sizeof(double *));
 				info_dat=malloc(naxis2*sizeof(long *));
+				y_axis=malloc(num_divs*sizeof(double *));
+				y_error=malloc(num_divs*sizeof(double *));
+				x_axis=malloc(num_divs*sizeof(double *));
 			
 				v_pixel_strip=calloc(naxis1,sizeof(double));
 				i_pixel_strip=calloc(naxis1,sizeof(double));
@@ -604,6 +673,17 @@ int DoIt(){
 		
 				}
 				
+				for (j=0;j<(num_divs-1);j++){
+					
+					x_axis[j]=calloc((inv_len),sizeof(double));
+					y_axis[j]=calloc((inv_len),sizeof(double));
+					y_error[j]=calloc((inv_len),sizeof(double));
+					
+				}
+				
+				x_axis[num_divs-1]=calloc((inv_len + naxis1%num_divs),sizeof(double));
+				y_axis[num_divs-1]=calloc((inv_len + naxis1%num_divs),sizeof(double));
+				y_error[num_divs-1]=calloc((inv_len + naxis1%num_divs),sizeof(double));
 				
 				/* Next, put data in the arrays, clear out blank values and NaNs from the data */
 	
@@ -720,23 +800,23 @@ int DoIt(){
 				umb_n_vel[k]=0;
 				pen_n_vel[k]=0;
 				
-				f_umb_p_vel[k]=0;
-				f_pen_p_vel[k]=0;
-				f_umb_n_vel[k]=0;
-				f_pen_n_vel[k]=0;
-				
 				umb_p_counter=0.0;
 				umb_n_counter=0.0;
 				pen_p_counter=0.0;
 				pen_n_counter=0.0;
 			
 				if (num_good > 0){
+					
+					/* We're going to do these loops twice - first to remove any satellite and differential 
+					 * rotation effects, then again to fit and remove trends. */
+			
+					/* First the satellite motion and the differential rotation */
 			
 					for (i=0;i<naxis1;i++){
 				
 						for (j=0;j<naxis2;j++){
-					
-							if ((radius[j][i] > 0)&&(con_dat[j][i] <= pen)&&(good_pixel(info_dat[j][i]))){
+							
+							if ((radius[j][i] > 0)&&(good_pixel(info_dat[j][i]))){
 								
 								/* Get the pixel location in HPL coordinates */
 							
@@ -768,28 +848,138 @@ int DoIt(){
 								/* vlos after removing all of the doppler effects. The 
 								 * division by 100 is to convert cm/s to m/s. */
 								
-								vlos=(vlos_dat[j][i]/100)-vr-vn-vw-vt;
+								vlos_dat[j][i]=(vlos_dat[j][i]/100)-vr-vn-vw-vt;
 								
-								/* Get rid of the LOS funniness */
+							}
+						}
+					}
+					
+					/* Next we fit a function across x, not including points that would be in a sunspot or off-disk points.
+					 * Then we subtract this trend from the remaining data. */
+					 
+					for (j=0;j<naxis2;j++){
+				
+						/* Fill the arrays along x */
+				
+						for (i=0;i<num_divs;i++){
+							
+							if (i < (num_divs-1)){
 								
-								mu=sqrt(1-pow(radius[j][i]/rsun_pix,2.0));
-							    vlos_fixed=vlos/limb_darken(mu);
+								/* There are a total of num_divs segments in a data strip.
+								 * To handle remainders when determining how many points to 
+								 * place in a segment, we first do the remainderless ones.
+								 * The last may or may not have a remainder, but that's where
+								 * one would go if it did, so we do it separately. */
+							
+								for (l=0;l<inv_len;l++){
+									
+									n=i*inv_len+l;
+									y_error[i][l]=1;
+									x_axis[i][l]=(double)n;
+									
+							
+									if ((radius[j][n] > 0)&&(con_dat[j][n] > pen)&&(good_pixel(info_dat[j][n]))){
+								
+										y_axis[i][l]=vlos_dat[j][n];
+								
+									} else {
+								
+										y_axis[i][l]=0.0;
+								
+									}
+						
+								}
+								
+							} else {
+								
+								/* Handle the one that might have a remainder */
+								
+								for (l=0;l<(inv_len + naxis1%num_divs);l++){
+									
+									n=(num_divs-1)*inv_len+l;
+									y_error[num_divs-1][l]=1;
+									x_axis[num_divs-1][l]=(double)n;
+									
+							
+									if ((radius[j][n] > 0)&&(con_dat[j][n] > pen)&&(good_pixel(info_dat[j][n]))){
+								
+										y_axis[num_divs-1][l]=vlos_dat[j][n];
+								
+									} else {
+								
+										y_axis[num_divs-1][l]=0.0;
+								
+									}
+						
+								}
+								
+							}
+							
+						}
+						
+						/* Now we fit, but in strips determined by num_divs */
+						
+						for (i=0;i<num_divs;i++){
+							
+							if (i < (num_divs-1)){
+									
+								v.x=x_axis[i];
+								v.y=y_axis[i];
+								v.ey=y_error[i];
+	
+								fit_status=mpfit(fit_me,inv_len,2,fit_params,0,&config,(void *)&v,&result);
+								
+								for (l=0;l<inv_len;l++){
+									
+									n=i*inv_len+l;
+									vlos_dat[j][n]=vlos_dat[j][n]-(fit_params[0]*x_axis[i][l]+fit_params[1]);	/* Subtract trend */
+									
+								}
+								
+							} else {
+								
+								v.x=x_axis[num_divs-1];
+								v.y=y_axis[num_divs-1];
+								v.ey=y_error[num_divs-1];
+	
+								fit_status=mpfit(fit_me,inv_len + naxis1%num_divs,2,fit_params,0,&config,(void *)&v,&result);
+							
+								for (l=0;l<(inv_len + naxis1%num_divs);l++){
+									
+									n=(num_divs-1)*inv_len+l;
+									vlos_dat[j][n]=vlos_dat[j][n]-(fit_params[0]*x_axis[num_divs-1][l]+fit_params[1]);	/* Subtract trend */
+									
+								}
+								
+							}
+						}	
+								
+					}
+					
+					/* Finally, we have a clean data set. Now get to work on it. */
+					 
+					 
+					for (i=0;i<naxis1;i++){
+				
+						for (j=0;j<naxis2;j++){
+							
+							if ((radius[j][i] > 0)&&(con_dat[j][i] < pen)&&(good_pixel(info_dat[j][i]))){
 						
 								/* "Positive" sunspot polarities. */
+								
+								vlos=vlos_dat[j][i];
 							
 								if (inc_dat[j][i] < 90){
 								
 									if (con_dat[j][i] <= umb){
 									
 										umb_p_vel[k]+=vlos;
-										f_umb_p_vel[k]+=vlos_fixed;
 										umb_p_counter++;
 								
 									}
 								
 									if (con_dat[j][i] > umb){
 									
-										f_pen_p_vel[k]+=vlos_fixed;
 										pen_p_vel[k]+=vlos;
 										pen_p_counter++;
 									
@@ -806,14 +996,12 @@ int DoIt(){
 									if (con_dat[j][i] <= umb){
 									
 										umb_n_vel[k]+=vlos;
-										f_umb_n_vel[k]+=vlos_fixed;
 										umb_n_counter++;
 								
 									}
 								
 									if (con_dat[j][i] > umb){
 									
-										f_pen_n_vel[k]+=vlos_fixed;
 										pen_n_vel[k]+=vlos;
 										pen_n_counter++;
 									
@@ -830,48 +1018,40 @@ int DoIt(){
 				if (umb_p_counter > 0){
 					
 					umb_p_vel[k]/=umb_p_counter;
-					f_umb_p_vel[k]/=umb_p_counter;
 					
 				} else {
 					
 					umb_p_vel[k]=0;
-					f_umb_p_vel[k]=0;
 					
 				}
 			
 				if (umb_n_counter > 0){
 					
 					umb_n_vel[k]/=umb_n_counter;
-					f_umb_n_vel[k]/=umb_n_counter;
 					
 				} else {
 					
 					umb_n_vel[k]=0;
-					f_umb_n_vel[k]=0;
 					
 				}
 				
 				if (pen_p_counter > 0){
 					
 					pen_p_vel[k]/=pen_p_counter;
-					f_pen_p_vel[k]/=pen_p_counter;
 					
 				} else {
 					
 					pen_p_vel[k]=0;
-					f_pen_p_vel[k]=0;
 					
 				}
 
 				if (pen_n_counter > 0){
 					
 					pen_n_vel[k]/=pen_n_counter;
-					f_pen_n_vel[k]/=pen_n_counter;
 					
 				} else {
 					
 					pen_n_vel[k]=0;
-					f_pen_n_vel[k]=0;
 					
 				}
 				
@@ -902,6 +1082,10 @@ int DoIt(){
 				free(i_pixel_strip);
 				free(c_pixel_strip);
 				free(info_pixel_strip);
+				
+				free(x_axis);
+				free(y_axis);
+				free(y_error);
 			
 				fits_close_file(v_ptr,&v_status);
 				fits_close_file(i_ptr,&i_status);
@@ -924,8 +1108,8 @@ int DoIt(){
 	bad_outptr=fopen(bad_outfile_name,"w");
 	
 	fprintf(outptr,"Active Region: %d\tVelocities are in m/s, fvlos is scaled to remove limb effects.\n",noaa_ar);
-	fprintf(outptr,"Full UT Time            time(s)  vlos pumb  vlos ppen  vlos numb  vlos npen  fvlos pum  fvlos ppe  fvlos num  fvlos npe\n");
-	fprintf(outptr,"----------------------  -------  ---------  ---------  ---------  ---------  ---------  ---------  ---------  ---------\n");
+	fprintf(outptr,"Full UT Time            time(s)  vlos pumb  vlos ppen  vlos numb  vlos npen\n");
+	fprintf(outptr,"----------------------  -------  ---------  ---------  ---------  ---------\n");
 
 	fprintf(bad_outptr,"Active Region: AR%d\n",noaa_ar);
 	fprintf(bad_outptr,"Full UT Time            quality\n");
@@ -937,7 +1121,7 @@ int DoIt(){
 		
 		if (quality[i] == 0){
 		
-			fprintf(outptr,"%s  %7ld  %6.2lf  %6.2lf  %6.2lf  %6.2lf  %6.2lf  %6.2lf  %6.2lf  %6.2lf\n",t_obs_s[i],t_secs[i]-t_secs[0],umb_p_vel[i],pen_p_vel[i],umb_n_vel[i],pen_n_vel[i],f_umb_p_vel[i],f_pen_p_vel[i],f_umb_n_vel[i],f_pen_n_vel[i]);
+			fprintf(outptr,"%s  %7ld  %6.2lf  %6.2lf  %6.2lf  %6.2lf\n",t_obs_s[i],t_secs[i]-t_secs[0],umb_p_vel[i],pen_p_vel[i],umb_n_vel[i],pen_n_vel[i]);
 		
 		} else {
 			
@@ -961,11 +1145,6 @@ int DoIt(){
 	free(pen_p_vel);
 	free(umb_n_vel);
 	free(pen_n_vel);
-	
-	free(f_umb_p_vel);
-	free(f_pen_p_vel);
-	free(f_umb_n_vel);
-	free(f_pen_n_vel);
 	
 	free(quality);
 	
