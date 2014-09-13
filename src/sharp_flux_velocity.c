@@ -1055,9 +1055,6 @@ int DoIt(){
 					
 				}
 				
-				/* Finally, convert t_obs to a more reasonable product. */
-				
-				t_secs[k]=isotime(t_obs_s[k]);
 			
 				/* Free up dynamic arrays and close the files for the next iteration. */
 				
@@ -1101,6 +1098,14 @@ int DoIt(){
 	}
 	
 	/* Output the results to a text file. */
+	
+	/* First, convert t_obs to a more reasonable product. */
+	
+	for (i=0;i<num_records;i++){			
+	
+		t_secs[i]=isotime(t_obs_s[i]);
+
+	}
 
 	printf("Writing to file %s.\n",outfile_name);
 	
@@ -1112,8 +1117,8 @@ int DoIt(){
 	fprintf(outptr,"----------------------  -------  ---------  ---------  ---------  ---------\n");
 
 	fprintf(bad_outptr,"Active Region: AR%d\n",noaa_ar);
-	fprintf(bad_outptr,"Full UT Time            quality\n");
-	fprintf(bad_outptr,"----------------------  -------\n");
+	fprintf(bad_outptr,"Full UT Time            quality  time(s)  number\n");
+	fprintf(bad_outptr,"----------------------  -------  -------  ------\n");
 	
 	for (i=0;i<num_records;i++){
 		
@@ -1125,7 +1130,7 @@ int DoIt(){
 		
 		} else {
 			
-			fprintf(bad_outptr,"%s  0x%08lX\n",t_obs_s[i],quality[i]);		
+			fprintf(bad_outptr,"%s  0x%08lX  %7ld  %d\n",t_obs_s[i],quality[i],t_secs[i],i+1);		
 		
 		}
 
